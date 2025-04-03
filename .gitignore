@@ -9,7 +9,6 @@ build/
 
 # Datové soubory a modely
 *.pkl
-*.csv
 
 # IDE config
 .vscode/
