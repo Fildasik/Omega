@@ -5,7 +5,28 @@ import time
 import pandas as pd
 import re
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlencode
+from dotenv import load_dotenv
+
+# Načteme konfiguraci z .env souboru
+load_dotenv()
+
+# Konfigurační proměnné
+BRAND = os.getenv("BRAND")  # Např. "skoda", "audi", "bmw" atd.
+NUM_LISTINGS = int(os.getenv("NUM_LISTINGS"))
+MAX_PAGES = int(os.getenv("MAX_PAGES"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
+OUTPUT_DIR = os.getenv("OUTPUT_DIR")
+MIN_PRICE = os.getenv("MIN_PRICE")  # Výchozí: 30000
+MAX_PRICE = os.getenv("MAX_PRICE") # Výchozí: 100000
+
+# Sestavení základní URL se zadanou značkou a cenovým rozsahem
+params = {"cena_od": MIN_PRICE, "cena_do": MAX_PRICE}
+query_string = urlencode(params)
+if BRAND:
+    base_url = f"https://www.autoesa.cz/{BRAND}?{query_string}"
+else:
+    base_url = f"https://www.autoesa.cz/vsechna-auta?{query_string}"
 
 pd.set_option('display.max_colwidth', None)
 
@@ -19,12 +40,10 @@ session.headers.update({
     "Connaection": "keep-alive"
 })
 
-
 def parse_brand_model(title: str) -> tuple[str, str]:
     """
     Rozdělí titulek (např. "Volkswagen Passat 2.0TDi") na značku a model.
-    Značka je první token (i když obsahuje pomlčku, např. "Mercedes-Benz")
-    a model je pouze druhý token.
+    Značka je první token, model je druhý token.
     """
     tokens = title.split()
     if len(tokens) < 2:
@@ -33,11 +52,10 @@ def parse_brand_model(title: str) -> tuple[str, str]:
     model = tokens[1]
     return (brand, model)
 
-
 def get_listing_links(page_url: str) -> list[str]:
     """
-    Na stránce Auto ESA (např. https://www.autoesa.cz/vsechna-auta?stranka=...)
-    najde odkazy na jednotlivé inzeráty. Odkazy se předpokládají v <a class="car_item">.
+    Na stránce Auto ESA (např. {base_url}&stranka=...) najde odkazy na jednotlivé inzeráty.
+    Odkazy jsou v elementech <a class="car_item">.
     """
     try:
         resp = session.get(page_url, timeout=10)
@@ -53,7 +71,6 @@ def get_listing_links(page_url: str) -> list[str]:
             full_url = href if href.startswith("http") else "https://www.autoesa.cz" + href
             links.add(full_url)
     return list(links)
-
 
 def parse_esa_detail(url: str) -> dict | None:
     """
@@ -80,7 +97,7 @@ def parse_esa_detail(url: str) -> dict | None:
     title_text = h1_tag.get_text(strip=True)
     brand, model = parse_brand_model(title_text)
 
-    # Rok – hledáme <li data-toggle="popover"> s <strong>Rok</strong> a potom <span>2018</span>
+    # Rok
     li_year = None
     for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
         strong = li.find("strong")
@@ -96,7 +113,7 @@ def parse_esa_detail(url: str) -> dict | None:
         return None
     year_val = span_year.get_text(strip=True)
 
-    # Najeté km – hledáme <li data-toggle="popover"> s <strong>Stav tachometru</strong>
+    # Najeté km
     li_mileage = None
     for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
         strong = li.find("strong")
@@ -113,7 +130,7 @@ def parse_esa_detail(url: str) -> dict | None:
     mileage_text = span_mileage.get_text(strip=True)
     mileage_digits = re.sub(r"[^\d]", "", mileage_text)
 
-    # Cena – hledáme <div class="show-more-price-right-right"> a v něm <strong>439 000 Kč</strong>
+    # Cena
     price_div = soup.find("div", class_="show-more-price-right-right")
     if not price_div:
         print(f"Nelze najít div pro cenu na {url}")
@@ -126,7 +143,7 @@ def parse_esa_detail(url: str) -> dict | None:
     price_digits = re.sub(r"[^\d]", "", price_text)
     price_val = price_digits
 
-    # Palivo – hledáme <li data-toggle="popover"> s <strong>Palivo</strong>
+    # Palivo
     li_fuel = None
     for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
         strong = li.find("strong")
@@ -142,7 +159,7 @@ def parse_esa_detail(url: str) -> dict | None:
         return None
     fuel_val = span_fuel.get_text(strip=True)
 
-    # Převodovka – hledáme <li data-toggle="popover"> s <strong>Převodovka</strong> a bereme první část před lomítkem
+    # Převodovka
     li_trans = None
     for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
         strong = li.find("strong")
@@ -159,7 +176,7 @@ def parse_esa_detail(url: str) -> dict | None:
     transmission_text = span_trans.get_text(strip=True)
     transmission_main = transmission_text.split("/")[0].strip()
 
-    # Výkon (kW) – hledáme <li> s <strong>Výkon</strong> a potom <span>140 kW</span>
+    # Výkon (kW)
     li_power = None
     for li in soup.find_all("li"):
         strong = li.find("strong")
@@ -196,7 +213,6 @@ def parse_esa_detail(url: str) -> dict | None:
         "Převodovka": transmission_main,
         "Výkon (kW)": power_val
     }
-
 
 def scrape_esa_one_page(page_url: str, max_workers: int = 10, seen_set=None):
     if seen_set is None:
@@ -240,12 +256,12 @@ def scrape_esa_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 print(f"Chyba při detailu {link}: {e}")
     return results, seen_set
 
-
 def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: int = 5, max_workers: int = 10):
     all_data = []
     seen_set = set()
     page = 1
     while page <= max_pages:
+        # Pokud base_url již obsahuje "?", použijeme "&stranka=", jinak "?"
         if page == 1:
             page_url = base_url
         else:
@@ -266,19 +282,17 @@ def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: in
     df = pd.DataFrame(all_data)
     if "URL" in df.columns:
         df.drop(columns=["URL"], inplace=True)
-    output_dir = r"C:\Users\filip\OMEGA\OmegaAuta-main\raw_data"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    output_path = os.path.join(output_dir, "auta_autoesa.csv")
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+    output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_autoesa.csv")
 
-    # Pokud soubor existuje, načteme ho a přidáme nové záznamy
+    # Pokud soubor již existuje, načteme jej a přidáme nové záznamy
     if os.path.exists(output_path):
         try:
             existing_df = pd.read_csv(output_path)
             combined_df = pd.concat([existing_df, df]).drop_duplicates().reset_index(drop=True)
             combined_df.to_csv(output_path, index=False, encoding="utf-8-sig")
-            print(
-                f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
+            print(f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
         except Exception as e:
             print(f"Chyba při načítání nebo ukládání existujícího souboru: {e}")
     else:
@@ -286,13 +300,12 @@ def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: in
         print(f"Hotovo! Uloženo {len(df)} záznamů do {output_path}.")
     return df
 
-
 if __name__ == "__main__":
     df = scrape_esa_min_inzeraty(
-        base_url="https://www.autoesa.cz/vsechna-auta?cena_od=400000&cena_do=600000",
-        min_inzeraty=550,
-        max_pages=272,
-        max_workers=12
+        base_url=base_url,
+        min_inzeraty=NUM_LISTINGS,
+        max_pages=MAX_PAGES,
+        max_workers=MAX_WORKERS
     )
     print("\nNáhled do CSV (prvních 5 řádků):")
     print(df.head())

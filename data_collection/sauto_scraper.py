@@ -5,16 +5,44 @@ import time
 import pandas as pd
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
 
 pd.set_option('display.max_colwidth', None)
+
+# Načtení konfigurace z .env souboru
+load_dotenv()
+
+# Načtení konfiguračních proměnných z .env
+BRAND = os.getenv("BRAND")
+NUM_LISTINGS = int(os.getenv("NUM_LISTINGS"))
+MAX_PAGES = int(os.getenv("MAX_PAGES"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
+OUTPUT_DIR = os.getenv("OUTPUT_DIR")
+MIN_PRICE = os.getenv("MIN_PRICE")
+MAX_PRICE = os.getenv("MAX_PRICE")
+
+# Convert price values to integers if they exist
+MIN_PRICE = int(MIN_PRICE) if MIN_PRICE else None
+MAX_PRICE = int(MAX_PRICE) if MAX_PRICE else None
+
+# Sestavení základní URL
+base_url = "https://www.sauto.cz/inzerce/osobni"
+if BRAND:
+    base_url += f"/{BRAND.lower()}"  # Ensure brand is lowercase for URL
+
+# Add status filter
+base_url += "?stav=nove%2Cojete"
+
+# Add price filters if specified
+if MIN_PRICE is not None:
+    base_url += f"&cena-od={MIN_PRICE}"
+if MAX_PRICE is not None:
+    base_url += f"&cena-do={MAX_PRICE}"
 
 # Globální session pro Sauto
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# Definované cenové limity podle URL
-MIN_CENA = 1800000
-MAX_CENA = 2000000
 
 def get_listing_links(page_url: str) -> list[str]:
     """
@@ -38,11 +66,10 @@ def get_listing_links(page_url: str) -> list[str]:
             links.add(full_url)
     return list(links)
 
+
 def fallback_brand_model(url: str) -> tuple[str, str]:
     """
-    Z fallbacku URL získá značku a model, např.:
-      https://www.sauto.cz/osobni/detail/mercedes-benz/tridy-c/208018649
-    => ('Mercedes Benz', 'Tridy C')
+    Z fallbacku URL získá značku a model
     """
     try:
         after = url.split("/detail/")[1]
@@ -57,11 +84,10 @@ def fallback_brand_model(url: str) -> tuple[str, str]:
     except:
         return ("Nezjištěno", "Nezjištěno")
 
+
 def parse_sauto_detail(url: str) -> dict | None:
     """
-    Načte detail inzerátu ze Sauto a extrahuje:
-      Značka, Model, Rok, Najeté km, Cena, Palivo, Převodovka, Výkon (kW).
-    Pokud některý z atributů není získán nebo cena nespadá do rozsahu MIN_CENA - MAX_CENA, vrací None.
+    Načte detail inzerátu ze Sauto a extrahuje data
     """
     fb_brand, fb_model = fallback_brand_model(url)
     try:
@@ -123,14 +149,6 @@ def parse_sauto_detail(url: str) -> dict | None:
             if pr_txt2:
                 price_val = pr_txt2
 
-    # Ověření, zda cena spadá do požadovaného rozsahu
-    try:
-        price_int = int(price_val)
-        if price_int < MIN_CENA or price_int > MAX_CENA:
-            return None
-    except:
-        return None
-
     # Palivo, Převodovka, Výkon (kW)
     li_elems = soup.find_all("li", class_=re.compile("c-car-properties__tile|c-car-otherProperties__tile"))
     for li in li_elems:
@@ -165,6 +183,7 @@ def parse_sauto_detail(url: str) -> dict | None:
         "Převodovka": gearbox_val,
         "Výkon (kW)": power_kw
     }
+
 
 def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
     if seen_set is None:
@@ -207,12 +226,12 @@ def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 print(f"Chyba při detailu {link}: {e}")
     return results, seen_set
 
+
 def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: int = 5, max_workers: int = 10):
     all_data = []
     seen_set = set()
     page = 1
     while page <= max_pages:
-        # Pokud base_url již obsahuje "?", použijeme "&strana=", jinak "?"
         if page == 1:
             page_url = base_url
         else:
@@ -230,18 +249,20 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
             break
         page += 1
         time.sleep(2)
+
     df = pd.DataFrame(all_data)
     if "URL" in df.columns:
         df.drop(columns=["URL"], inplace=True)
 
-    output_path = r"C:\Users\filip\OMEGA\OmegaAuta-main\raw_data\auta_sauto.csv"
+    output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto.csv")
     # Pokud CSV soubor již existuje, načteme jej a připočteme nové záznamy
     if os.path.exists(output_path):
         try:
             existing_df = pd.read_csv(output_path)
             combined_df = pd.concat([existing_df, df]).drop_duplicates().reset_index(drop=True)
             combined_df.to_csv(output_path, index=False, encoding="utf-8-sig")
-            print(f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
+            print(
+                f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
         except Exception as e:
             print(f"Chyba při načítání nebo ukládání existujícího souboru: {e}")
     else:
@@ -249,12 +270,13 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
         print(f"Hotovo! Uloženo {len(df)} záznamů do {output_path}.")
     return df
 
+
 if __name__ == "__main__":
     df = scrape_sauto_min_inzeraty(
-        base_url="https://www.sauto.cz/inzerce/osobni?cena-od=1800000&cena-do=2000000&stav=nove%2Cojete",
-        min_inzeraty=1100,  # Kolik inzerátů chceme
-        max_pages=9999,
-        max_workers=12
+        base_url=base_url,
+        min_inzeraty=NUM_LISTINGS,
+        max_pages=MAX_PAGES,
+        max_workers=MAX_WORKERS
     )
     print("\nNáhled do CSV (prvních 5 řádků):")
     print(df.head())

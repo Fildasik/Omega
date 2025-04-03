@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Načtení datasetu
-df = pd.read_csv(r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\auta_cleaned.csv", encoding="utf-8")
+df = pd.read_csv(r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\final_dataset_2.1.csv", encoding="utf-8")
 
 # Ujistíme se, že sloupec 'Cena' je numerický
 df["Cena"] = pd.to_numeric(df["Cena"], errors="coerce")

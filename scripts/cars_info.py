@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Načtení vyčištěného datasetu
-df = pd.read_csv(r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\auta_cleaned.csv", encoding="utf-8")
+df = pd.read_csv(r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\final_dataset_2.1.csv", encoding="utf-8")
 
 # Přejmenování sloupce "Značka" na "znacka", pokud existuje
 if "Značka" in df.columns:

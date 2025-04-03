@@ -3,7 +3,7 @@ import glob
 import os
 
 # Cesta k adresáři, kde jsou uložené CSV soubory
-path = r"C:\Users\filip\OMEGA\OmegaAuta-main\raw_data"
+path = r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data"
 
 # Hledáme všechny CSV soubory, jejichž název začíná "auta_"
 csv_files = glob.glob(os.path.join(path, "auta_*.csv"))
@@ -48,7 +48,7 @@ merged_df = pd.concat(dfs, ignore_index=True)
 merged_df = merged_df.sort_values(by="Cena")
 
 # Uložíme sloučený dataset do nového CSV souboru ve stejném adresáři
-output_path = os.path.join(path, r"C:\Users\filip\OMEGA\OmegaAuta-main\datasets\merged_auta.csv")
+output_path = os.path.join(path, r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_auta_2.csv")
 merged_df.to_csv(output_path, index=False, encoding="utf-8-sig")
 
 print(f"Sloučený dataset byl uložen do {os.path.abspath(output_path)}")
