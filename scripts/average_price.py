@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Nastav cestu k souboru, případně uprav dle umístění
-csv_path = r"/datasets/final_dataset_2.csv"
+csv_path = r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\final_dataset.csv"
 
 # Načtení datasetu
 df = pd.read_csv(csv_path, encoding="utf-8")

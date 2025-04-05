@@ -43,8 +43,7 @@ if MAX_PRICE is not None:
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-
-def get_listing_links(page_url: str) -> list[str]:
+def get_listing_links(page_url: str) -> list:
     """
     Získá odkazy na detail inzerátů z jedné stránky Sauto.
     Vrací seznam unikátních URL.
@@ -55,7 +54,6 @@ def get_listing_links(page_url: str) -> list[str]:
     except Exception as e:
         print(f"Chyba při načítání listingu {page_url}: {e}")
         return []
-
     soup = BeautifulSoup(resp.text, "html.parser")
     links = set()
     items = soup.find_all("a", class_="sds-surface sds-surface--clickable sds-surface--00 c-item__link")
@@ -66,10 +64,9 @@ def get_listing_links(page_url: str) -> list[str]:
             links.add(full_url)
     return list(links)
 
-
-def fallback_brand_model(url: str) -> tuple[str, str]:
+def fallback_brand_model(url: str) -> tuple:
     """
-    Z fallbacku URL získá značku a model
+    Z fallbacku URL získá značku a model.
     """
     try:
         after = url.split("/detail/")[1]
@@ -84,10 +81,10 @@ def fallback_brand_model(url: str) -> tuple[str, str]:
     except:
         return ("Nezjištěno", "Nezjištěno")
 
-
-def parse_sauto_detail(url: str) -> dict | None:
+def parse_sauto_detail(url: str) -> dict or None:
     """
-    Načte detail inzerátu ze Sauto a extrahuje data
+    Načte detail inzerátu ze Sauto a extrahuje data.
+    Extrahuje: Značka, Model, Objem (cm³), Rok, Najeté km, Cena, Palivo, Převodovka, Výkon (kW).
     """
     fb_brand, fb_model = fallback_brand_model(url)
     try:
@@ -107,6 +104,7 @@ def parse_sauto_detail(url: str) -> dict | None:
     fuel_val = "Nezjištěno"
     gearbox_val = "Nezjištěno"
     power_kw = "Nezjištěno"
+    engine_volume = "Nezjištěno"  # Nově: objem motoru (v cm³)
 
     # Získání roku a najetých km
     subinfo = soup.find("span", class_="c-a-basic-info__subtitle-info")
@@ -149,7 +147,7 @@ def parse_sauto_detail(url: str) -> dict | None:
             if pr_txt2:
                 price_val = pr_txt2
 
-    # Palivo, Převodovka, Výkon (kW)
+    # Palivo, Převodovka, Výkon (kW) a Objem
     li_elems = soup.find_all("li", class_=re.compile("c-car-properties__tile|c-car-otherProperties__tile"))
     for li in li_elems:
         lbl_div = li.find("div", class_=re.compile("tile-label"))
@@ -166,9 +164,22 @@ def parse_sauto_detail(url: str) -> dict | None:
             digits = re.sub(r"[^\d]", "", val)
             if digits:
                 power_kw = digits
+        elif lbl == "Objem":
+            # Extrahujeme hodnotu objemu motoru (např. "4 996 ccm")
+            match = re.search(r'(\d[\d\s]*)(?=\s*ccm)', val.replace('\xa0', ' '))
+            if match:
+                digits = re.sub(r'\s+', '', match.group(1))
+                try:
+                    volume_cm3 = int(digits)
+                    # Uložíme hodnotu v cm³ (bez dělení 1000)
+                    engine_volume = volume_cm3
+                except:
+                    engine_volume = "Nezjištěno"
+            else:
+                engine_volume = "Nezjištěno"
 
-    # Kontrola povinných hodnot
-    mandatory = [brand, model, year_val, mileage_val, price_val, fuel_val, gearbox_val, power_kw]
+    # Kontrola povinných hodnot – pokud je některá hodnota "Nezjištěno", inzerát se neuloží
+    mandatory = [brand, model, year_val, mileage_val, price_val, fuel_val, gearbox_val, power_kw, engine_volume]
     if any(x == "Nezjištěno" for x in mandatory):
         return None
 
@@ -176,6 +187,7 @@ def parse_sauto_detail(url: str) -> dict | None:
         "URL": url,
         "Značka": brand,
         "Model": model,
+        "Objem (cm³)": engine_volume,  # Ukládáme objem v cm³
         "Rok": year_val,
         "Najeté km": mileage_val,
         "Cena": price_val,
@@ -183,7 +195,6 @@ def parse_sauto_detail(url: str) -> dict | None:
         "Převodovka": gearbox_val,
         "Výkon (kW)": power_kw
     }
-
 
 def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
     if seen_set is None:
@@ -201,6 +212,7 @@ def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 dedup_key = (
                     data["Značka"],
                     data["Model"],
+                    data["Objem (cm³)"],
                     data["Rok"],
                     data["Najeté km"],
                     data["Cena"],
@@ -216,6 +228,7 @@ def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 print(f"URL:        {data['URL']}")
                 print(f"Značka:     {data['Značka']}")
                 print(f"Model:      {data['Model']}")
+                print(f"Objem (cm³):  {data['Objem (cm³)']}")
                 print(f"Rok:        {data['Rok']}")
                 print(f"Najeté km:  {data['Najeté km']}")
                 print(f"Cena:       {data['Cena']}")
@@ -223,9 +236,8 @@ def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 print(f"Převodovka: {data['Převodovka']}")
                 print(f"Výkon (kW): {data['Výkon (kW)']}")
             except Exception as e:
-                print(f"Chyba při detailu {link}: {e}")
+                print(f"Chyba při zpracování detailu {link}: {e}")
     return results, seen_set
-
 
 def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: int = 5, max_workers: int = 10):
     all_data = []
@@ -255,21 +267,18 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
         df.drop(columns=["URL"], inplace=True)
 
     output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto.csv")
-    # Pokud CSV soubor již existuje, načteme jej a připočteme nové záznamy
     if os.path.exists(output_path):
         try:
             existing_df = pd.read_csv(output_path)
             combined_df = pd.concat([existing_df, df]).drop_duplicates().reset_index(drop=True)
             combined_df.to_csv(output_path, index=False, encoding="utf-8-sig")
-            print(
-                f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
+            print(f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
         except Exception as e:
             print(f"Chyba při načítání nebo ukládání existujícího souboru: {e}")
     else:
         df.to_csv(output_path, index=False, encoding="utf-8-sig")
         print(f"Hotovo! Uloženo {len(df)} záznamů do {output_path}.")
     return df
-
 
 if __name__ == "__main__":
     df = scrape_sauto_min_inzeraty(

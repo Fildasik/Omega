@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode
 from dotenv import load_dotenv
 
+pd.set_option('display.max_colwidth', None)
+
 # Načteme konfiguraci z .env souboru
 load_dotenv()
 
@@ -18,7 +20,7 @@ MAX_PAGES = int(os.getenv("MAX_PAGES"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 OUTPUT_DIR = os.getenv("OUTPUT_DIR")
 MIN_PRICE = os.getenv("MIN_PRICE")  # Výchozí: 30000
-MAX_PRICE = os.getenv("MAX_PRICE") # Výchozí: 100000
+MAX_PRICE = os.getenv("MAX_PRICE")  # Výchozí: 100000
 
 # Sestavení základní URL se zadanou značkou a cenovým rozsahem
 params = {"cena_od": MIN_PRICE, "cena_do": MAX_PRICE}
@@ -40,6 +42,7 @@ session.headers.update({
     "Connaection": "keep-alive"
 })
 
+
 def parse_brand_model(title: str) -> tuple[str, str]:
     """
     Rozdělí titulek (např. "Volkswagen Passat 2.0TDi") na značku a model.
@@ -51,6 +54,7 @@ def parse_brand_model(title: str) -> tuple[str, str]:
     brand = tokens[0]
     model = tokens[1]
     return (brand, model)
+
 
 def get_listing_links(page_url: str) -> list[str]:
     """
@@ -72,10 +76,14 @@ def get_listing_links(page_url: str) -> list[str]:
             links.add(full_url)
     return list(links)
 
+
 def parse_esa_detail(url: str) -> dict | None:
     """
     Načte detail inzerátu z Auto ESA a extrahuje:
-      Značka, Model, Rok, Najeté km, Cena, Palivo, Převodovka, Výkon (kW)
+      Značka, Model, Objem (l), Rok, Najeté km, Cena, Palivo, Převodovka, Výkon (kW)
+
+    Pro extrakci objemu motoru se hledá element s <strong>Motor</strong> a odpovídající <span>.
+    Z textu (např. "2.0TDCi" nebo "1.6 TDi") se vezme pouze číselná hodnota (např. 2.0, 1.6).
     """
     try:
         r = session.get(url, timeout=10)
@@ -197,15 +205,39 @@ def parse_esa_detail(url: str) -> dict | None:
         return None
     power_val = match_power.group(1)
 
-    mandatory = [brand, model, year_val, mileage_digits, price_val, fuel_val, transmission_main, power_val]
-    if any(x == "" for x in mandatory):
-        print(f"Chybí nějaká povinná hodnota na {url}")
+    # NOVĚ: Extrakce motoru (Objem) z elementu "Motor"
+    engine_val = "Nezjištěno"
+    li_motor = None
+    for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
+        strong = li.find("strong")
+        if strong and strong.get_text(strip=True).lower() == "motor":
+            li_motor = li
+            break
+    if li_motor:
+        span_motor = li_motor.find("span")
+        if span_motor:
+            motor_text = span_motor.get_text(strip=True)
+            # Extrahujeme pouze číslo (s desetinnou čárkou nebo tečkou) – např. "2.0TDCi" nebo "1.6 TDi"
+            match_motor = re.search(r'(\d+(?:[.,]\d+)?)', motor_text)
+            if match_motor:
+                engine_val = float(match_motor.group(1).replace(',', '.'))
+            else:
+                engine_val = "Nezjištěno"
+        else:
+            engine_val = "Nezjištěno"
+    else:
+        engine_val = "Nezjištěno"
+
+    # Kontrola povinných hodnot – pokud je některá hodnota "Nezjištěno", záznam se neuloží
+    mandatory = [brand, model, year_val, mileage_digits, price_val, fuel_val, transmission_main, power_val, engine_val]
+    if any(x == "Nezjištěno" for x in mandatory):
         return None
 
     return {
         "URL": url,
         "Značka": brand,
         "Model": model,
+        "Objem (l)": engine_val,  # Ukládáme objem motoru (v litrech) – získaný z textu motoru
         "Rok": year_val,
         "Najeté km": mileage_digits,
         "Cena": price_val,
@@ -214,10 +246,10 @@ def parse_esa_detail(url: str) -> dict | None:
         "Výkon (kW)": power_val
     }
 
+
 def scrape_esa_one_page(page_url: str, max_workers: int = 10, seen_set=None):
     if seen_set is None:
         seen_set = set()
-
     links = get_listing_links(page_url)
     print(f"Na stránce '{page_url}' nalezeno {len(links)} inzerátů.")
     results = []
@@ -236,7 +268,8 @@ def scrape_esa_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                     data["Cena"],
                     data["Palivo"],
                     data["Převodovka"],
-                    data["Výkon (kW)"]
+                    data["Výkon (kW)"],
+                    data["Objem (l)"]
                 )
                 if dedup_key in seen_set:
                     continue
@@ -246,6 +279,7 @@ def scrape_esa_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 print(f"URL:          {data['URL']}")
                 print(f"Značka:       {data['Značka']}")
                 print(f"Model:        {data['Model']}")
+                print(f"Objem (l):    {data['Objem (l)']}")
                 print(f"Rok:          {data['Rok']}")
                 print(f"Najeté km:    {data['Najeté km']}")
                 print(f"Cena:         {data['Cena']}")
@@ -253,8 +287,9 @@ def scrape_esa_one_page(page_url: str, max_workers: int = 10, seen_set=None):
                 print(f"Převodovka:   {data['Převodovka']}")
                 print(f"Výkon (kW):   {data['Výkon (kW)']}")
             except Exception as e:
-                print(f"Chyba při detailu {link}: {e}")
+                print(f"Chyba při zpracování detailu {link}: {e}")
     return results, seen_set
+
 
 def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: int = 5, max_workers: int = 10):
     all_data = []
@@ -285,20 +320,20 @@ def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: in
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
     output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_autoesa.csv")
-
-    # Pokud soubor již existuje, načteme jej a přidáme nové záznamy
     if os.path.exists(output_path):
         try:
             existing_df = pd.read_csv(output_path)
             combined_df = pd.concat([existing_df, df]).drop_duplicates().reset_index(drop=True)
             combined_df.to_csv(output_path, index=False, encoding="utf-8-sig")
-            print(f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
+            print(
+                f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
         except Exception as e:
             print(f"Chyba při načítání nebo ukládání existujícího souboru: {e}")
     else:
         df.to_csv(output_path, index=False, encoding="utf-8-sig")
         print(f"Hotovo! Uloženo {len(df)} záznamů do {output_path}.")
     return df
+
 
 if __name__ == "__main__":
     df = scrape_esa_min_inzeraty(

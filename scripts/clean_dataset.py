@@ -1,88 +1,56 @@
+from datetime import datetime
 import pandas as pd
 import unicodedata
 import re
-
 
 def remove_diacritics(s: str) -> str:
     """Odstraní diakritiku ze zadaného řetězce."""
     nfkd_form = unicodedata.normalize('NFKD', s)
     return ''.join(c for c in nfkd_form if not unicodedata.combining(c))
 
+def remove_hyphens(s: str) -> str:
+    """Odstraní všechny pomlčky ze zadaného řetězce."""
+    return s.replace("-", "")
 
 def unify_brand(brand: str) -> str:
     """
-    Sjednotí varianty značek podle prefixů.
+    Sjednotí varianty značek podle prefixů pomocí dictionary.
     Například:
       "auDi" → "Audi"
       "BMW", "Bmw" → "BMW"
       "mercedes BeNz" → "Mercedes-Benz"
       "Skoda", "Škoda" → "Škoda"
+    Pokud značka nezačíná na žádný z definovaných prefixů, vrací se značka s prvním písmenem velkým.
     """
     if pd.isna(brand):
         return None
-    b = remove_diacritics(str(brand).strip().lower())
-
-    if b.startswith("aud"):
-        standard = "Audi"
-    elif b.startswith("bmw"):
-        standard = "BMW"
-    elif b.startswith("cit"):
-        standard = "Citroën"
-    elif b.startswith("dod"):
-        standard = "Dodge"
-    elif b.startswith("for"):
-        standard = "Ford"
-    elif b.startswith("hyu"):
-        standard = "Hyundai"
-    elif b.startswith("jee"):
-        standard = "Jeep"
-    elif b.startswith("kia"):
-        standard = "Kia"
-    elif b.startswith("maz"):
-        standard = "Mazda"
-    elif b.startswith("mer"):
-        standard = "Mercedes-Benz"
-    elif b.startswith("nis"):
-        standard = "Nissan"
-    elif b.startswith("ope"):
-        standard = "Opel"
-    elif b.startswith("peu"):
-        standard = "Peugeot"
-    elif b.startswith("por"):
-        standard = "Porsche"
-    elif b.startswith("ren"):
-        standard = "Renault"
-    elif b.startswith("sko"):
-        standard = "Škoda"
-    elif b.startswith("toy"):
-        standard = "Toyota"
-    elif b.startswith("volk"):
-        standard = "Volkswagen"
-    elif b.startswith("volv"):
-        standard = "Volvo"
-    else:
-        standard = str(brand).strip().title()
-
-    # Ověříme, že standard obsahuje jen písmena (bez diakritiky a mezer)
-    b_clean = remove_diacritics(standard).replace(" ", "").lower()
-    if not re.fullmatch(r"[a-z]+", b_clean):
-        return None
-    return standard
-
-
-def unify_model(model: str) -> str:
-    """
-    Sjednotí model.
-    Pokud model obsahuje "rada" (v jakékoli podobě: RADA, Řada, rada), vrátí "Rada".
-    Jinak převede na title case.
-    """
-    if pd.isna(model):
-        return None
-    m = remove_diacritics(model.strip().lower())
-    if m == "rada":
-        return "Rada"
-    return model.strip().title()
-
+    # Odstraň diakritiku a pomlčky, uprav na malá písmena
+    b = remove_hyphens(remove_diacritics(str(brand).strip().lower()))
+    prefixes = {
+        "aud": "Audi",
+        "bmw": "BMW",
+        "cit": "Citroën",
+        "dod": "Dodge",
+        "for": "Ford",
+        "hyu": "Hyundai",
+        "jee": "Jeep",
+        "kia": "Kia",
+        "maz": "Mazda",
+        "mer": "MercedesBenz",
+        "nis": "Nissan",
+        "ope": "Opel",
+        "peu": "Peugeot",
+        "por": "Porsche",
+        "ren": "Renault",
+        "sko": "Skoda",
+        "toy": "Toyota",
+        "volk": "Volkswagen",
+        "volv": "Volvo"
+    }
+    for prefix, standard in prefixes.items():
+        if b.startswith(prefix):
+            return standard
+    return str(brand).strip().title()
 
 def unify_transmission(t: str) -> str:
     """
@@ -100,17 +68,15 @@ def unify_transmission(t: str) -> str:
     else:
         return None
 
-
 def check_palivo(p: str) -> str or None:
     """
     Pokud sloupec Palivo neobsahuje ani "benz" (Benzin), ani "naf" (Nafta),
-    ani "hyb" (Hybridni), ani "ele" (Elektro) – v libovolné podobě,
-    vrátí None (řádek se odstraní).
-    Pokud obsahuje:
-      - "benz" → vrátí "Benzin"
-      - "naf" → vrátí "Nafta"
-      - "hyb" → vrátí "Hybridni"
-      - "ele" → vrátí "Elektro"
+    ani "hyb" (Hybridni), ani "ele" (Elektro) – vrátí None.
+    Jinak vrátí standardizovanou hodnotu:
+      - "benz" → "Benzin"
+      - "naf" → "Nafta"
+      - "hyb" → "Hybridni"
+      - "ele" → "Elektro"
     """
     if pd.isna(p):
         return None
@@ -126,7 +92,6 @@ def check_palivo(p: str) -> str or None:
     else:
         return None
 
-
 def clean_dataset(file_path: str, output_path: str) -> pd.DataFrame:
     """
     Načte dataset, vyčistí ho a uloží do output_path.
@@ -134,14 +99,14 @@ def clean_dataset(file_path: str, output_path: str) -> pd.DataFrame:
     Úpravy:
       - odstraní duplicity a prázdné řádky,
       - převede číselné sloupce ("Rok", "Najeté km", "Cena", "Výkon (kW)") na numeric,
-      - filtruje data: Cena mezi 30 000 a 8 000 000, Rok mezi 1970 a 2025,
+      - filtruje data: Cena mezi 30 000 a 2 500 000 a Rok mezi 1970 a 2025,
       - standardizuje sloupce "Značka", "Model", "Palivo" a "Převodovka",
       - odstraní řádky, kde Palivo neobsahuje ani "Benzin", "Nafta", "Hybridni" nebo "Elektro",
       - odstraní řádky s chybějícími kritickými hodnotami,
       - speciálně filtruje data pro BMW (odstraní řádky, kde je Značka "BMW" a Model je přesně "Rada"),
-      - smaže sloupec "Zdroj", pokud existuje,
-      - přidá sloupec "Stari" jako (2025 - Rok) a poté odstraní sloupec "Rok",
-      - nakonec odstraní diakritiku ze všech textových sloupců, takže výsledný CSV bude bez diakritiky.
+      - odstraní sloupec "Zdroj", pokud existuje,
+      - přidá sloupec "Stari" = (aktuální rok - Rok) a poté odstraní sloupec "Rok",
+      - odstraní diakritiku a pomlčky ze všech textových sloupců, takže výsledný CSV bude bez diakritiky a pomlček.
     """
     df = pd.read_csv(file_path, encoding="utf-8")
 
@@ -154,13 +119,14 @@ def clean_dataset(file_path: str, output_path: str) -> pd.DataFrame:
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # 3. Filtrování extrémních hodnot: Cena 30k-8M, Rok 1970-2025
-    df = df[df["Cena"].between(10000, 4000000)]
+    # 3. Filtrování extrémních hodnot:
+    # Cena mezi 30 000 a 2 500 000 a Rok mezi 1970 a 2025
+    df = df[df["Cena"].between(30000, 2500000)]
     df = df[df["Rok"].between(1970, 2025)]
 
-    # 4. Standardizace textových sloupců
+    # 4. Standardizace textových sloupců pomocí sjednocovacích funkcí
     df["Značka"] = df["Značka"].apply(unify_brand)
-    df["Model"] = df["Model"].apply(unify_model)
+    # Ponecháme sloupec Model beze změny zde – sjednocení modelu můžete provést samostatně nebo později
     df["Převodovka"] = df["Převodovka"].apply(unify_transmission)
     df["Palivo"] = df["Palivo"].apply(check_palivo)
 
@@ -168,32 +134,31 @@ def clean_dataset(file_path: str, output_path: str) -> pd.DataFrame:
     mandatory = ["Značka", "Model", "Rok", "Cena", "Palivo", "Převodovka", "Výkon (kW)"]
     df.dropna(subset=mandatory, inplace=True)
 
-    # 6. Speciální filtr pro BMW: Pokud je Značka "BMW" a Model je přesně "Rada", řádek smažeme
-    df = df[~((df["Značka"] == "BMW") & (df["Model"].str.fullmatch(r"Rada", case=False)))]
+    # 6. Speciální filtrování pro BMW (odstraní řádky, kde je Model přesně "Rada")
+    df = df[~((df["Značka"] == "BMW") & (df["Model"].str.lower() == "rada"))]
 
     # 7. Odstranění sloupce "Zdroj", pokud existuje
     if "Zdroj" in df.columns:
         df.drop(columns=["Zdroj"], inplace=True)
 
-    # 8. Přidání sloupce "Stari" = 2025 - Rok a odstranění sloupce "Rok"
-    current_year = 2025
+    # 8. Přidání sloupce "Stari" = (aktuální rok - Rok) a odstranění sloupce "Rok"
+    current_year = datetime.now().year
     df["Stari"] = current_year - df["Rok"]
     df.drop(columns=["Rok"], inplace=True)
 
-    # 9. Odstranění diakritiky ze všech textových sloupců (výstup bude čistě bez diakritiky)
+    # 9. Odstranění diakritiky a pomlček ze všech textových sloupců
     text_columns = ["Značka", "Model", "Palivo", "Převodovka"]
     for col in text_columns:
-        df[col] = df[col].apply(lambda x: remove_diacritics(x) if isinstance(x, str) else x)
+        df[col] = df[col].apply(lambda x: remove_hyphens(remove_diacritics(x)) if isinstance(x, str) else x)
 
     # Uložení vyčištěného datasetu
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
     return df
 
-
 # Příklad použití:
 cleaned_df = clean_dataset(
-    r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_auta_2.csv",
-    r"/datasets/final_dataset_2.csv"
+    r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_auta.csv",
+    r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\final_dataset.csv"
 )
 print("Čištění dokončeno.")
 print(cleaned_df.head())

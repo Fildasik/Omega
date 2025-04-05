@@ -8,7 +8,7 @@ build/
 *.spec
 
 # Datové soubory a modely
-*.pkl
+models/
 
 # IDE config
 .vscode/

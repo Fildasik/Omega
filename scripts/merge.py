@@ -1,54 +1,37 @@
 import pandas as pd
-import glob
 import os
 
-# Cesta k adresáři, kde jsou uložené CSV soubory
-path = r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data"
+# Cesty ke vstupním CSV souborům
+input_csv1 = r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_autoesa.csv"
+input_csv2 = r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto_cleaned.csv"
 
-# Hledáme všechny CSV soubory, jejichž název začíná "auta_"
-csv_files = glob.glob(os.path.join(path, "auta_*.csv"))
+# Cesta k výstupnímu CSV souboru
+output_csv = r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_auta.csv"
 
-if not csv_files:
-    print("Nenalezeny žádné soubory odpovídající vzoru 'auta_*.csv'. Zkontrolujte názvy souborů a cestu.")
+# Ověření existence vstupních souborů
+if not os.path.exists(input_csv1):
+    print("Soubor nebyl nalezen:", input_csv1)
+    exit()
+if not os.path.exists(input_csv2):
+    print("Soubor nebyl nalezen:", input_csv2)
     exit()
 
-dfs = []
-for file in csv_files:
-    try:
-        df = pd.read_csv(file, encoding="utf-8-sig")
-    except Exception as e:
-        print(f"Chyba při načítání souboru {file}: {e}")
-        continue
+# Načtení CSV souborů
+df1 = pd.read_csv(input_csv1, encoding="utf-8-sig")
+df2 = pd.read_csv(input_csv2, encoding="utf-8-sig")
+print("Počet záznamů v prvním souboru:", len(df1))
+print("Počet záznamů v druhém souboru:", len(df2))
 
-    if "Cena" in df.columns:
-        # Převedeme sloupec 'Cena' na číselný typ, pokud je to nutné
-        df["Cena"] = pd.to_numeric(df["Cena"], errors="coerce")
-    else:
-        print(f"Soubor {file} neobsahuje sloupec 'Cena'. Přeskakuji.")
-        continue
+# Přidání sloupce "Zdroj" pro identifikaci původu dat
+df1["Zdroj"] = "Autoesa"
+df2["Zdroj"] = "Sauto"
 
-    # Přidáme informaci o zdroji na základě názvu souboru
-    if "autoesa" in file.lower():
-        df["Zdroj"] = "Autoesa"
-    elif "sauto" in file.lower():
-        df["Zdroj"] = "Sauto"
-    else:
-        df["Zdroj"] = "Neznámý"
+# Sloučení obou DataFrame
+merged_df = pd.concat([df1, df2], ignore_index=True)
 
-    dfs.append(df)
-
-if not dfs:
-    print("Nebyly načteny žádné validní datové sady.")
-    exit()
-
-# Sloučíme všechny DataFrame
-merged_df = pd.concat(dfs, ignore_index=True)
-
-# Seřadíme výsledný DataFrame podle ceny
+# Seřazení výsledného DataFrame podle sloupce "Cena"
 merged_df = merged_df.sort_values(by="Cena")
 
-# Uložíme sloučený dataset do nového CSV souboru ve stejném adresáři
-output_path = os.path.join(path, r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_auta_2.csv")
-merged_df.to_csv(output_path, index=False, encoding="utf-8-sig")
-
-print(f"Sloučený dataset byl uložen do {os.path.abspath(output_path)}")
+# Uložení sloučeného datasetu do výstupního CSV souboru
+merged_df.to_csv(output_csv, index=False, encoding="utf-8-sig")
+print("Sloučený dataset byl uložen do:", os.path.abspath(output_csv))
