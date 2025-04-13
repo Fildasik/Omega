@@ -10,17 +10,60 @@ from dotenv import load_dotenv
 
 pd.set_option('display.max_colwidth', None)
 
-# Načteme konfiguraci z .env souboru
+# Načtení konfigurace z .env souboru
 load_dotenv()
 
-# Konfigurační proměnné
-BRAND = os.getenv("BRAND")  # Např. "skoda", "audi", "bmw" atd.
-NUM_LISTINGS = int(os.getenv("NUM_LISTINGS"))
-MAX_PAGES = int(os.getenv("MAX_PAGES"))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
-OUTPUT_DIR = os.getenv("OUTPUT_DIR")
-MIN_PRICE = os.getenv("MIN_PRICE")  # Výchozí: 30000
-MAX_PRICE = os.getenv("MAX_PRICE")  # Výchozí: 100000
+
+# Funkce pro validaci konfiguračních hodnot
+def validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_PRICE):
+    errors = []
+    if MIN_PRICE is not None and MIN_PRICE < 0:
+        errors.append("MIN_PRICE nesmí být záporná.")
+    if NUM_LISTINGS <= 0:
+        errors.append("NUM_LISTINGS musí být kladné číslo.")
+    if MAX_PAGES <= 0:
+        errors.append("MAX_PAGES musí být kladné číslo.")
+    if MAX_WORKERS <= 0:
+        errors.append("MAX_WORKERS musí být kladné číslo.")
+    if MIN_PRICE is not None and MAX_PRICE is not None and MIN_PRICE >= MAX_PRICE:
+        errors.append("MIN_PRICE musí být menší než MAX_PRICE.")
+    if errors:
+        raise ValueError(" ".join(errors))
+
+
+# Funkce pro fallback URL: ověří, zda zadaná značka vrací očekávaný obsah
+def get_validated_url(base_url: str, brand: str) -> str:
+    test_url = f"{base_url}/{brand}?{urlencode({'stav': 'nove,ojete'})}"
+    try:
+        response = requests.get(test_url, timeout=10)
+        response.raise_for_status()
+        # Jednoduchá kontrola: očekáváme, že stránka obsahuje výraz "inzerát"
+        if "inzerát" not in response.text.lower():
+            print(f"Zadaná značka '{brand}' nevrací očekávaný obsah, používá se fallback URL.")
+            return base_url
+        return test_url
+    except Exception as e:
+        print(f"Chyba při ověřování URL pro značku '{brand}': {e}")
+        return base_url
+
+
+# Načtení konfiguračních proměnných z .env
+BRAND = os.getenv("BRAND")
+NUM_LISTINGS = int(os.getenv("NUM_LISTINGS", 50))
+MAX_PAGES = int(os.getenv("MAX_PAGES", 5))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))
+OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./raw_data")
+MIN_PRICE = os.getenv("MIN_PRICE")
+MAX_PRICE = os.getenv("MAX_PRICE")
+
+MIN_PRICE = int(MIN_PRICE) if MIN_PRICE is not None else None
+MAX_PRICE = int(MAX_PRICE) if MAX_PRICE is not None else None
+
+try:
+    validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_PRICE)
+except ValueError as ve:
+    print("Konfigurační chyba:", ve)
+    exit(1)
 
 # Sestavení základní URL se zadanou značkou a cenovým rozsahem
 params = {"cena_od": MIN_PRICE, "cena_do": MAX_PRICE}
@@ -30,7 +73,9 @@ if BRAND:
 else:
     base_url = f"https://www.autoesa.cz/vsechna-auta?{query_string}"
 
-pd.set_option('display.max_colwidth', None)
+# Ověření URL pomocí fallback mechanismu, pokud je značka zadána
+if BRAND:
+    base_url = get_validated_url("https://www.autoesa.cz", BRAND)
 
 # Vytvoříme session s hlavičkami
 session = requests.Session()
@@ -51,14 +96,12 @@ def parse_brand_model(title: str) -> tuple[str, str]:
     tokens = title.split()
     if len(tokens) < 2:
         return (title, "Nezjištěno")
-    brand = tokens[0]
-    model = tokens[1]
-    return (brand, model)
+    return (tokens[0], tokens[1])
 
 
 def get_listing_links(page_url: str) -> list[str]:
     """
-    Na stránce Auto ESA (např. {base_url}&stranka=...) najde odkazy na jednotlivé inzeráty.
+    Na stránce Auto ESA najde odkazy na jednotlivé inzeráty.
     Odkazy jsou v elementech <a class="car_item">.
     """
     try:
@@ -81,9 +124,6 @@ def parse_esa_detail(url: str) -> dict | None:
     """
     Načte detail inzerátu z Auto ESA a extrahuje:
       Značka, Model, Objem (l), Rok, Najeté km, Cena, Palivo, Převodovka, Výkon (kW)
-
-    Pro extrakci objemu motoru se hledá element s <strong>Motor</strong> a odpovídající <span>.
-    Z textu (např. "2.0TDCi" nebo "1.6 TDi") se vezme pouze číselná hodnota (např. 2.0, 1.6).
     """
     try:
         r = session.get(url, timeout=10)
@@ -93,7 +133,7 @@ def parse_esa_detail(url: str) -> dict | None:
         return None
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Značka a model – element: <div class="car_detail2__h1"><h1>Volkswagen Passat 2.0TDi</h1></div>
+    # Značka a model
     h1_div = soup.find("div", class_="car_detail2__h1")
     if not h1_div:
         print(f"Nelze najít element pro značku/model na {url}")
@@ -205,7 +245,7 @@ def parse_esa_detail(url: str) -> dict | None:
         return None
     power_val = match_power.group(1)
 
-    # NOVĚ: Extrakce motoru (Objem) z elementu "Motor"
+    # Extrakce motoru (Objem) z elementu "Motor"
     engine_val = "Nezjištěno"
     li_motor = None
     for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
@@ -217,7 +257,6 @@ def parse_esa_detail(url: str) -> dict | None:
         span_motor = li_motor.find("span")
         if span_motor:
             motor_text = span_motor.get_text(strip=True)
-            # Extrahujeme pouze číslo (s desetinnou čárkou nebo tečkou) – např. "2.0TDCi" nebo "1.6 TDi"
             match_motor = re.search(r'(\d+(?:[.,]\d+)?)', motor_text)
             if match_motor:
                 engine_val = float(match_motor.group(1).replace(',', '.'))
@@ -237,7 +276,7 @@ def parse_esa_detail(url: str) -> dict | None:
         "URL": url,
         "Značka": brand,
         "Model": model,
-        "Objem (l)": engine_val,  # Ukládáme objem motoru (v litrech) – získaný z textu motoru
+        "Objem (l)": engine_val,
         "Rok": year_val,
         "Najeté km": mileage_digits,
         "Cena": price_val,
@@ -296,12 +335,11 @@ def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: in
     seen_set = set()
     page = 1
     while page <= max_pages:
-        # Pokud base_url již obsahuje "?", použijeme "&stranka=", jinak "?"
         if page == 1:
             page_url = base_url
         else:
             sep = "&" if "?" in base_url else "?"
-            page_url = f"{base_url}{sep}stranka={page}"
+            page_url = f"{base_url}{sep}strana={page}"
         print(f"\nSCRAPUJI STRÁNKU č.{page}: {page_url}")
         page_results, seen_set = scrape_esa_one_page(page_url, max_workers=max_workers, seen_set=seen_set)
         if not page_results:
