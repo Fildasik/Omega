@@ -57,25 +57,20 @@ if MIN_PRICE is not None:
 if MAX_PRICE is not None:
     base_url += f"&cena-do={MAX_PRICE}"
 
-
-# Fallback mechanismus: ověří, zda URL pro zadanou značku vrací očekávaný obsah; pokud ne, použije základní URL
-def get_validated_url(base_url, brand):
-    test_url = f"{base_url}/{brand}?stav=nove%2Cojete"
+# Opravený fallback mechanismus – zachová URL s parametry
+def get_validated_url(url_to_test: str, brand: str):
     try:
-        response = requests.get(test_url, timeout=10)
+        response = requests.get(url_to_test, timeout=10)
         response.raise_for_status()
         if "inzerát" not in response.text.lower():
-            print(f"Zadaná značka '{brand}' nevrací očekávaný obsah, používá se fallback URL.")
-            return base_url
-        return test_url
+            print(f"Zadaná značka '{brand}' nevrací očekávaný obsah, používá se fallback URL bez značky.")
+            return url_to_test.replace(f"/{brand.lower()}", "")
+        return url_to_test
     except Exception as e:
         print(f"Chyba při ověřování URL pro značku '{brand}': {e}")
-        return base_url
+        return url_to_test.replace(f"/{brand.lower()}", "")
 
-
-validated_url = get_validated_url("https://www.sauto.cz/inzerce/osobni", BRAND)
-if validated_url != base_url:
-    base_url = validated_url
+base_url = get_validated_url(base_url, BRAND)
 
 # Globální session pro Sauto
 session = requests.Session()
@@ -83,7 +78,6 @@ session.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
 def get_listing_links(page_url: str) -> list:
-    """Získá odkazy na detail inzerátů z jedné stránky Sauto."""
     try:
         resp = session.get(page_url, timeout=10)
         resp.raise_for_status()
@@ -102,7 +96,6 @@ def get_listing_links(page_url: str) -> list:
 
 
 def fallback_brand_model(url: str) -> tuple:
-    """Z fallbacku URL získá značku a model."""
     try:
         after = url.split("/detail/")[1]
         parts = after.split("/")
@@ -118,10 +111,6 @@ def fallback_brand_model(url: str) -> tuple:
 
 
 def parse_sauto_detail(url: str) -> dict or None:
-    """
-    Načte detail inzerátu ze Sauto a extrahuje data.
-    Extrahuje: Značka, Model, Objem (cm³), Rok, Najeté km, Cena, Palivo, Převodovka, Výkon (kW).
-    """
     fb_brand, fb_model = fallback_brand_model(url)
     try:
         r = session.get(url, timeout=10)
@@ -287,10 +276,21 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
             break
         page += 1
         time.sleep(2)
+
     df = pd.DataFrame(all_data)
     if "URL" in df.columns:
         df.drop(columns=["URL"], inplace=True)
-    output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto2.csv")
+
+    # PŮVODNÍ ŘÁDEK:
+    # output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto2.csv")
+
+    # NOVÝ BLOK:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(script_dir)
+    raw_data_dir = os.path.join(base_dir, "raw_data")
+    os.makedirs(raw_data_dir, exist_ok=True)
+    output_path = os.path.join(raw_data_dir, "auta_sauto.csv")
+
     if os.path.exists(output_path):
         try:
             existing_df = pd.read_csv(output_path)
@@ -303,8 +303,8 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
     else:
         df.to_csv(output_path, index=False, encoding="utf-8-sig")
         print(f"Hotovo! Uloženo {len(df)} záznamů do {output_path}.")
-    return df
 
+    return df
 
 if __name__ == "__main__":
     df = scrape_sauto_min_inzeraty(

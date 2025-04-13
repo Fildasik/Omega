@@ -8,83 +8,82 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode
 from dotenv import load_dotenv
 
+# Nastavení možností pandas
 pd.set_option('display.max_colwidth', None)
 
 # Načtení konfigurace z .env souboru
 load_dotenv()
 
+# Konfigurační proměnné s výchozími hodnotami
+BRAND = os.getenv("BRAND")  # Například "skoda", "audi", "bmw" atd.
+NUM_LISTINGS = int(os.getenv("NUM_LISTINGS", "50"))
+MAX_PAGES = int(os.getenv("MAX_PAGES", "5"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "10"))
+OUTPUT_DIR = os.getenv("OUTPUT_DIR") if os.getenv("OUTPUT_DIR") else "./raw_data"
+MIN_PRICE = os.getenv("MIN_PRICE")
+MAX_PRICE = os.getenv("MAX_PRICE")
+MIN_PRICE = int(MIN_PRICE) if MIN_PRICE is not None else None
+MAX_PRICE = int(MAX_PRICE) if MAX_PRICE is not None else None
 
-# Funkce pro validaci konfiguračních hodnot
-def validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_PRICE):
+
+# Validace konfiguračních hodnot
+def validate_config(brand, num_listings, max_pages, max_workers, min_price, max_price):
     errors = []
-    if MIN_PRICE is not None and MIN_PRICE < 0:
+    if min_price is not None and min_price < 0:
         errors.append("MIN_PRICE nesmí být záporná.")
-    if NUM_LISTINGS <= 0:
+    if num_listings <= 0:
         errors.append("NUM_LISTINGS musí být kladné číslo.")
-    if MAX_PAGES <= 0:
+    if max_pages <= 0:
         errors.append("MAX_PAGES musí být kladné číslo.")
-    if MAX_WORKERS <= 0:
+    if max_workers <= 0:
         errors.append("MAX_WORKERS musí být kladné číslo.")
-    if MIN_PRICE is not None and MAX_PRICE is not None and MIN_PRICE >= MAX_PRICE:
+    if min_price is not None and max_price is not None and min_price >= max_price:
         errors.append("MIN_PRICE musí být menší než MAX_PRICE.")
     if errors:
         raise ValueError(" ".join(errors))
 
 
-# Funkce pro fallback URL: ověří, zda zadaná značka vrací očekávaný obsah
-def get_validated_url(base_url: str, brand: str) -> str:
-    test_url = f"{base_url}/{brand}?{urlencode({'stav': 'nove,ojete'})}"
-    try:
-        response = requests.get(test_url, timeout=10)
-        response.raise_for_status()
-        # Jednoduchá kontrola: očekáváme, že stránka obsahuje výraz "inzerát"
-        if "inzerát" not in response.text.lower():
-            print(f"Zadaná značka '{brand}' nevrací očekávaný obsah, používá se fallback URL.")
-            return base_url
-        return test_url
-    except Exception as e:
-        print(f"Chyba při ověřování URL pro značku '{brand}': {e}")
-        return base_url
-
-
-# Načtení konfiguračních proměnných z .env
-BRAND = os.getenv("BRAND")
-NUM_LISTINGS = int(os.getenv("NUM_LISTINGS", 50))
-MAX_PAGES = int(os.getenv("MAX_PAGES", 5))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./raw_data")
-MIN_PRICE = os.getenv("MIN_PRICE")
-MAX_PRICE = os.getenv("MAX_PRICE")
-
-MIN_PRICE = int(MIN_PRICE) if MIN_PRICE is not None else None
-MAX_PRICE = int(MAX_PRICE) if MAX_PRICE is not None else None
-
 try:
     validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_PRICE)
 except ValueError as ve:
-    print("Konfigurační chyba:", ve)
+    print(f"Konfigurační chyba: {ve}")
     exit(1)
 
-# Sestavení základní URL se zadanou značkou a cenovým rozsahem
-params = {"cena_od": MIN_PRICE, "cena_do": MAX_PRICE}
+# Sestavení query stringu podle cenového rozsahu
+params = {}
+if MIN_PRICE is not None:
+    params["cena_od"] = MIN_PRICE
+if MAX_PRICE is not None:
+    params["cena_do"] = MAX_PRICE
 query_string = urlencode(params)
+
+
+# Funkce pro ověření URL – zkusí načíst stránku a v případě chyby vrátí základní URL bez parametrů
+def get_validated_url(base: str, brand: str, query: str) -> str:
+    test_url = f"{base}/{brand}?{query}"
+    try:
+        response = requests.get(test_url, timeout=10)
+        response.raise_for_status()
+        return test_url
+    except Exception as e:
+        print(f"Chyba při ověřování URL pro značku '{brand}': {e}")
+        return f"{base}/{brand}"
+
+
+# Sestavení základní URL – pokud je zadána značka, ověříme URL, jinak použijeme stránku se všemi auty
 if BRAND:
-    base_url = f"https://www.autoesa.cz/{BRAND}?{query_string}"
+    base_url = get_validated_url("https://www.autoesa.cz", BRAND, query_string)
 else:
     base_url = f"https://www.autoesa.cz/vsechna-auta?{query_string}"
 
-# Ověření URL pomocí fallback mechanismu, pokud je značka zadána
-if BRAND:
-    base_url = get_validated_url("https://www.autoesa.cz", BRAND)
-
-# Vytvoříme session s hlavičkami
+# Vytvoření session s hlavičkami
 session = requests.Session()
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "cs-CZ,cs;q=0.9,en-US;q=0.8,en;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
-    "Connaection": "keep-alive"
+    "Connection": "keep-alive"
 })
 
 
@@ -101,7 +100,7 @@ def parse_brand_model(title: str) -> tuple[str, str]:
 
 def get_listing_links(page_url: str) -> list[str]:
     """
-    Na stránce Auto ESA najde odkazy na jednotlivé inzeráty.
+    Na stránce Auto ESA (např. s parametrem stranka=...) najde odkazy na jednotlivé inzeráty.
     Odkazy jsou v elementech <a class="car_item">.
     """
     try:
@@ -245,7 +244,7 @@ def parse_esa_detail(url: str) -> dict | None:
         return None
     power_val = match_power.group(1)
 
-    # Extrakce motoru (Objem) z elementu "Motor"
+    # Extrakce motoru (Objem)
     engine_val = "Nezjištěno"
     li_motor = None
     for li in soup.find_all("li", attrs={"data-toggle": "popover"}):
@@ -267,7 +266,7 @@ def parse_esa_detail(url: str) -> dict | None:
     else:
         engine_val = "Nezjištěno"
 
-    # Kontrola povinných hodnot – pokud je některá hodnota "Nezjištěno", záznam se neuloží
+    # Pokud je některá povinná hodnota neúplná, záznam se neuloží
     mandatory = [brand, model, year_val, mileage_digits, price_val, fuel_val, transmission_main, power_val, engine_val]
     if any(x == "Nezjištěno" for x in mandatory):
         return None
@@ -335,11 +334,12 @@ def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: in
     seen_set = set()
     page = 1
     while page <= max_pages:
+        # Pokud base_url již obsahuje "?", použijeme "&stranka=", jinak "?"
         if page == 1:
             page_url = base_url
         else:
             sep = "&" if "?" in base_url else "?"
-            page_url = f"{base_url}{sep}strana={page}"
+            page_url = f"{base_url}{sep}stranka={page}"
         print(f"\nSCRAPUJI STRÁNKU č.{page}: {page_url}")
         page_results, seen_set = scrape_esa_one_page(page_url, max_workers=max_workers, seen_set=seen_set)
         if not page_results:
@@ -357,7 +357,7 @@ def scrape_esa_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: in
         df.drop(columns=["URL"], inplace=True)
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
-    output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_autoesa.csv")
+    output_path = os.path.join(OUTPUT_DIR, "auta_autoesa.csv")
     if os.path.exists(output_path):
         try:
             existing_df = pd.read_csv(output_path)
