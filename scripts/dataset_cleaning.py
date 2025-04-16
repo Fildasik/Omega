@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 import pandas as pd
 import unicodedata
 import re
@@ -11,7 +12,8 @@ def remove_hyphens_spaces(s: str) -> str:
     return s.replace("-", "").replace(" ", "")
 
 def unify_text(s: str) -> str:
-    if pd.isna(s): return None
+    if pd.isna(s):
+        return None
     s_clean = remove_diacritics(s).lower()
     s_clean = remove_hyphens_spaces(s_clean)
     return s_clean.title()  # sjednocené finálně na např. "Troc", "Cmax", "Xtrail"
@@ -33,7 +35,8 @@ def unify_brand(brand: str) -> str:
     return str(brand).strip().title()
 
 def unify_transmission(t: str) -> str:
-    if pd.isna(t): return None
+    if pd.isna(t):
+        return None
     text = remove_diacritics(t.strip().lower())
     if "man" in text:
         return "Manuální"
@@ -42,11 +45,12 @@ def unify_transmission(t: str) -> str:
     return None
 
 def check_palivo(p: str) -> str or None:
-    if pd.isna(p): return None
+    if pd.isna(p):
+        return None
     text = p.strip().lower()
-    if "benz" in text:
+    if "benz" in text or "gasol" in text:
         return "Benzin"
-    elif "naf" in text:
+    elif "naf" in text or "diesel" in text:
         return "Nafta"
     elif "hyb" in text:
         return "Hybridni"
@@ -99,11 +103,12 @@ def clean_dataset(file_path: str, output_path: str) -> pd.DataFrame:
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
     return df
 
-# Použití:
-cleaned_df = clean_dataset(
-    r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_dataset.csv",
-    r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\final_dataset.csv"
-)
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+input_path = os.path.join(base_dir, "datasets", "merged_dataset.csv")
+output_path = os.path.join(base_dir, "datasets", "final_dataset.csv")
+
+# Použití funkce pro vyčištění datasetu
+cleaned_df = clean_dataset(input_path, output_path)
 print("Čištění dokončeno.")
 print(cleaned_df.head())
 print(cleaned_df["Model"].value_counts().head(20))

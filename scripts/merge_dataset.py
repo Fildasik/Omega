@@ -1,12 +1,15 @@
 import pandas as pd
 import os
 
-# Cesty ke vstupním CSV souborům
-input_csv1 = r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_autoesa.csv"
-input_csv2 = r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto_cleaned.csv"
+# Základní adresář – cesta tam, kde se tento skript nachází
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Cesta k výstupnímu CSV souboru
-output_csv = r"C:\Users\Asus\PV\OMEGA\OmegaCars\datasets\merged_auta.csv"
+# Cesty ke vstupním CSV souborům (v adresáři raw_data)
+input_csv1 = os.path.join(base_dir, "raw_data", "auta_autoesa.csv")
+input_csv2 = os.path.join(base_dir, "raw_data", "auta_sauto_cleaned.csv")
+
+# Cesta k výstupnímu CSV souboru (v adresáři datasets)
+output_csv = os.path.join(base_dir, "datasets", "merged_dataset.csv")
 
 # Ověření existence vstupních souborů
 if not os.path.exists(input_csv1):

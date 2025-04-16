@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 import time
 import pandas as pd
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 pd.set_option('display.max_colwidth', None)
@@ -12,8 +11,18 @@ pd.set_option('display.max_colwidth', None)
 # Načtení konfigurace z .env souboru
 load_dotenv()
 
+# Načtení konfiguračních proměnných z .env
+BRAND = os.getenv("BRAND")
+NUM_LISTINGS = int(os.getenv("NUM_LISTINGS"))
+MAX_PAGES = int(os.getenv("MAX_PAGES"))
+OUTPUT_DIR = os.getenv("OUTPUT_DIR")
+MIN_PRICE = os.getenv("MIN_PRICE")
+MAX_PRICE = os.getenv("MAX_PRICE")
 
-def validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_PRICE):
+MIN_PRICE = int(MIN_PRICE) if MIN_PRICE is not None else None
+MAX_PRICE = int(MAX_PRICE) if MAX_PRICE is not None else None
+
+def validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MIN_PRICE, MAX_PRICE):
     errors = []
     if MIN_PRICE is not None and MIN_PRICE < 0:
         errors.append("MIN_PRICE nesmí být záporná.")
@@ -21,28 +30,14 @@ def validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_
         errors.append("NUM_LISTINGS musí být kladné číslo.")
     if MAX_PAGES <= 0:
         errors.append("MAX_PAGES musí být kladné číslo.")
-    if MAX_WORKERS <= 0:
-        errors.append("MAX_WORKERS musí být kladné číslo.")
     if MIN_PRICE is not None and MAX_PRICE is not None and MIN_PRICE >= MAX_PRICE:
         errors.append("MIN_PRICE musí být menší než MAX_PRICE.")
     if errors:
         raise ValueError(" ".join(errors))
 
 
-# Načtení konfiguračních proměnných z .env
-BRAND = os.getenv("BRAND")
-NUM_LISTINGS = int(os.getenv("NUM_LISTINGS", 50))
-MAX_PAGES = int(os.getenv("MAX_PAGES", 5))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./raw_data")
-MIN_PRICE = os.getenv("MIN_PRICE")
-MAX_PRICE = os.getenv("MAX_PRICE")
-
-MIN_PRICE = int(MIN_PRICE) if MIN_PRICE is not None else None
-MAX_PRICE = int(MAX_PRICE) if MAX_PRICE is not None else None
-
 try:
-    validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MAX_WORKERS, MIN_PRICE, MAX_PRICE)
+    validate_config(BRAND, NUM_LISTINGS, MAX_PAGES, MIN_PRICE, MAX_PRICE)
 except ValueError as ve:
     print("Konfigurační chyba:", ve)
     exit(1)
@@ -76,7 +71,6 @@ base_url = get_validated_url(base_url, BRAND)
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-
 def get_listing_links(page_url: str) -> list:
     try:
         resp = session.get(page_url, timeout=10)
@@ -94,7 +88,6 @@ def get_listing_links(page_url: str) -> list:
             links.add(full_url)
     return list(links)
 
-
 def fallback_brand_model(url: str) -> tuple:
     try:
         after = url.split("/detail/")[1]
@@ -108,7 +101,6 @@ def fallback_brand_model(url: str) -> tuple:
         return ("Nezjištěno", "Nezjištěno")
     except:
         return ("Nezjištěno", "Nezjištěno")
-
 
 def parse_sauto_detail(url: str) -> dict or None:
     fb_brand, fb_model = fallback_brand_model(url)
@@ -141,7 +133,7 @@ def parse_sauto_detail(url: str) -> dict or None:
                 if len(splitted) == 2:
                     try:
                         rok = int(splitted[1])
-                        if 1900 < rok < 2100:
+                        if 1900 < rok < 2025:
                             year_val = str(rok)
                     except:
                         pass
@@ -209,52 +201,48 @@ def parse_sauto_detail(url: str) -> dict or None:
         "Výkon (kW)": power_kw
     }
 
-
-def scrape_sauto_one_page(page_url: str, max_workers: int = 10, seen_set=None):
+def scrape_sauto_one_page(page_url: str, seen_set=None):
     if seen_set is None:
         seen_set = set()
     links = get_listing_links(page_url)
     print(f"Na stránce '{page_url}' nalezeno {len(links)} inzerátů.")
     results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(parse_sauto_detail, ln) for ln in links]
-        for link, future in zip(links, futures):
-            try:
-                data = future.result()
-                if not data:
-                    continue
-                dedup_key = (
-                    data["Značka"],
-                    data["Model"],
-                    data["Objem (cm³)"],
-                    data["Rok"],
-                    data["Najeté km"],
-                    data["Cena"],
-                    data["Palivo"],
-                    data["Převodovka"],
-                    data["Výkon (kW)"]
-                )
-                if dedup_key in seen_set:
-                    continue
-                seen_set.add(dedup_key)
-                results.append(data)
-                print("-" * 60)
-                print(f"URL:        {data['URL']}")
-                print(f"Značka:     {data['Značka']}")
-                print(f"Model:      {data['Model']}")
-                print(f"Objem (cm³):  {data['Objem (cm³)']}")
-                print(f"Rok:        {data['Rok']}")
-                print(f"Najeté km:  {data['Najeté km']}")
-                print(f"Cena:       {data['Cena']}")
-                print(f"Palivo:     {data['Palivo']}")
-                print(f"Převodovka: {data['Převodovka']}")
-                print(f"Výkon (kW): {data['Výkon (kW)']}")
-            except Exception as e:
-                print(f"Chyba při zpracování detailu {link}: {e}")
+    for link in links:
+        try:
+            data = parse_sauto_detail(link)
+            if not data:
+                continue
+            dedup_key = (
+                data["Značka"],
+                data["Model"],
+                data["Objem (cm³)"],
+                data["Rok"],
+                data["Najeté km"],
+                data["Cena"],
+                data["Palivo"],
+                data["Převodovka"],
+                data["Výkon (kW)"]
+            )
+            if dedup_key in seen_set:
+                continue
+            seen_set.add(dedup_key)
+            results.append(data)
+            print("-" * 60)
+            print(f"URL:        {data['URL']}")
+            print(f"Značka:     {data['Značka']}")
+            print(f"Model:      {data['Model']}")
+            print(f"Objem (cm³):  {data['Objem (cm³)']}")
+            print(f"Rok:        {data['Rok']}")
+            print(f"Najeté km:  {data['Najeté km']}")
+            print(f"Cena:       {data['Cena']}")
+            print(f"Palivo:     {data['Palivo']}")
+            print(f"Převodovka: {data['Převodovka']}")
+            print(f"Výkon (kW): {data['Výkon (kW)']}")
+        except Exception as e:
+            print(f"Chyba při zpracování detailu {link}: {e}")
     return results, seen_set
 
-
-def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: int = 5, max_workers: int = 10):
+def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: int = 5):
     all_data = []
     seen_set = set()
     page = 1
@@ -265,7 +253,7 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
             sep = "&" if "?" in base_url else "?"
             page_url = f"{base_url}{sep}strana={page}"
         print(f"\nSCRAPUJI STRÁNKU č.{page}: {page_url}")
-        page_results, seen_set = scrape_sauto_one_page(page_url, max_workers=max_workers, seen_set=seen_set)
+        page_results, seen_set = scrape_sauto_one_page(page_url, seen_set=seen_set)
         if not page_results:
             print("Žádné inzeráty splňující podmínky => končím.")
             break
@@ -281,9 +269,6 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
     if "URL" in df.columns:
         df.drop(columns=["URL"], inplace=True)
 
-    # PŮVODNÍ ŘÁDEK:
-    # output_path = os.path.join(OUTPUT_DIR, r"C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto2.csv")
-
     # NOVÝ BLOK:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.dirname(script_dir)
@@ -297,7 +282,8 @@ def scrape_sauto_min_inzeraty(base_url: str, min_inzeraty: int = 50, max_pages: 
             combined_df = pd.concat([existing_df, df]).drop_duplicates().reset_index(drop=True)
             combined_df.to_csv(output_path, index=False, encoding="utf-8-sig")
             print(
-                f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}.")
+                f"Hotovo! Přidáno {len(combined_df) - len(existing_df)} nových záznamů. Celkem {len(combined_df)} záznamů uložených do {output_path}."
+            )
         except Exception as e:
             print(f"Chyba při načítání nebo ukládání existujícího souboru: {e}")
     else:
@@ -310,8 +296,7 @@ if __name__ == "__main__":
     df = scrape_sauto_min_inzeraty(
         base_url=base_url,
         min_inzeraty=NUM_LISTINGS,
-        max_pages=MAX_PAGES,
-        max_workers=MAX_WORKERS
+        max_pages=MAX_PAGES
     )
     print("\nNáhled do CSV (prvních 5 řádků):")
     print(df.head())

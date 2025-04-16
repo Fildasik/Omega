@@ -1,8 +1,11 @@
 import pandas as pd
+import os
 
-# Nastav cesty k souborům – uprav dle svého prostředí
-input_csv = r'C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto.csv'
-output_csv = r'C:\Users\Asus\PV\OMEGA\OmegaCars\raw_data\auta_sauto_cleaned.csv'
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Nastavení cest k souborům pomocí relativních cest
+input_csv = os.path.join(base_dir, "raw_data", "auta_sauto.csv")
+output_csv = os.path.join(base_dir, "raw_data", "auta_sauto_cleaned.csv")
 
 # Načtení CSV souboru
 df = pd.read_csv(input_csv, encoding='utf-8-sig')
